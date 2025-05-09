@@ -106,7 +106,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("WithOriginsPolicy", policy =>
     {
-        policy.WithOrigins("https://nexus-astralis-2.vercel.app") // Puerto de React: 5173.
+        policy.WithOrigins("https://nexus-astralis-2.vercel.app", "http://localhost:4200") // Puerto de React: 5173.
               .AllowAnyHeader()
               .AllowAnyMethod();
     });
@@ -129,5 +129,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.UseStaticFiles();
 
 app.Run();

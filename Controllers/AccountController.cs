@@ -8,6 +8,9 @@ using SpaceUserAPI.Models.Translate;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Google.Apis.Auth;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using Microsoft.IdentityModel.Protocols;
 
 namespace SpaceUserAPI.Controllers
 {
@@ -15,6 +18,87 @@ namespace SpaceUserAPI.Controllers
     [ApiController]
     public class AccountController(ITranslator translator, IEmailSender emailSender, SignInManager<Models.User.SpaceUser> signInManager, UserManager<Models.User.SpaceUser> userManager, IConfiguration configuration) : ControllerBase
     {
+        private readonly string GoogleClientId = Environment.GetEnvironmentVariable("Google-Client-Id")!; // Reemplaza con tu Client ID.
+        private readonly string MicrosoftClientId = Environment.GetEnvironmentVariable("Microsoft-Client-Id")!; // Reemplaza con tu Client ID.
+        private readonly string MicrosoftClientSecret = Environment.GetEnvironmentVariable("Microsoft-Client-Secret")!; // Reemplaza con tu Client Secret.
+
+        [HttpGet("GoogleLogin/{token}")]
+        public async Task<IActionResult> GoogleLogin(string token)
+        {
+            try
+            {
+                // Verificar el token de Google
+                var payload = await GoogleJsonWebSignature.ValidateAsync(token, new GoogleJsonWebSignature.ValidationSettings
+                {
+                    Audience = [GoogleClientId] // Validar contra tu Client ID
+                });
+
+                // Aquí puedes usar los datos del usuario
+                var email = payload.Email;
+                var name = payload.Name;
+                var picture = payload.Picture;
+
+                // Lógica adicional: Crear o autenticar al usuario en tu sistema
+                return Ok(new
+                {
+                    Message = "Inicio de sesión exitoso",
+                    Email = email,
+                    Name = name,
+                    Picture = picture
+                });
+            }
+            catch (InvalidJwtException ex)
+            {
+                // Token inválido
+                return BadRequest(new { Message = "Token inválido", Error = ex.Message });
+            }
+        }
+
+        [HttpGet("MicrosoftLogin/{token}")]
+        public async Task<IActionResult> MicrosoftLogin(string token)
+        {
+            try
+            {
+                // Configurar los parámetros de validación
+                var configManager = new ConfigurationManager<OpenIdConnectConfiguration>(
+                    "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration",
+                    new OpenIdConnectConfigurationRetriever());
+
+                var config = await configManager.GetConfigurationAsync();
+                var tokenHandler = new JwtSecurityTokenHandler();
+
+                var validationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuers = ["https://login.microsoftonline.com/" + MicrosoftClientSecret + "/v2.0"],
+                    ValidateAudience = true,
+                    ValidAudiences = [MicrosoftClientId],
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKeys = config.SigningKeys,
+                    ValidateLifetime = true
+                };
+
+                // Validar el token
+                var claimsPrincipal = tokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
+
+                // Obtener información del usuario
+                var userEmail = claimsPrincipal.FindFirst("preferred_username")?.Value;
+                var name = claimsPrincipal.FindFirst("name")?.Value;
+
+                return Ok(new
+                {
+                    message = "Login exitoso",
+                    email = userEmail,
+                    name = name
+                });
+            }
+            catch (Exception ex)
+            {
+                // _logger.LogError(ex, "Error al validar el token de Microsoft");
+                return BadRequest(new { message = "Token inválido", Error = ex.Message });
+            }
+        }
+
         [HttpGet("Users")]
         public async Task<IActionResult> Users()
         {
