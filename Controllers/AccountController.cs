@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using SpaceUserAPI.Interface;
 using SpaceUserAPI.Models.User;
-using SpaceUserAPI.Models.Translate;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -16,15 +15,19 @@ namespace SpaceUserAPI.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class AccountController(ITranslator translator, IEmailSender emailSender, SignInManager<Models.User.SpaceUser> signInManager, UserManager<Models.User.SpaceUser> userManager, IConfiguration configuration) : ControllerBase
+    public class AccountController(IEmailSender emailSender, SignInManager<SpaceUser> signInManager, UserManager<SpaceUser> userManager, IConfiguration configuration) : ControllerBase
     {
         private readonly string GoogleClientId = Environment.GetEnvironmentVariable("Google-Client-Id")!; // Reemplaza con tu Client ID.
         private readonly string MicrosoftClientId = Environment.GetEnvironmentVariable("Microsoft-Client-Id")!; // Reemplaza con tu Client ID.
         private readonly string MicrosoftClientSecret = Environment.GetEnvironmentVariable("Microsoft-Client-Secret")!; // Reemplaza con tu Client Secret.
 
-        [HttpGet("GoogleLogin/{token}")]
-        public async Task<IActionResult> GoogleLogin(string token)
+        //[HttpGet("GoogleLogin/{token}")]
+        //public async Task<IActionResult> GoogleLogin(string token)
+        [HttpPost("GoogleLogin")]
+        public async Task<IActionResult> GoogleLogin([FromBody] GoogleLoginRequest request)
         {
+            var token = request.Token;
+
             try
             {
                 // Verificar el token de Google
@@ -33,24 +36,42 @@ namespace SpaceUserAPI.Controllers
                     Audience = [GoogleClientId] // Validar contra tu Client ID
                 });
 
+                var user = await userManager.FindByEmailAsync(payload.Email);
+                if (user == null)
+                {
+                    user = new SpaceUser
+                    {
+                        UserName = payload.Email,
+                        Email = payload.Email,
+                        Name = payload.Name,
+                        EmailConfirmed = true,
+                        ProfileImage = payload.Picture
+                    };
+                    await userManager.CreateAsync(user);
+                    await userManager.AddToRoleAsync(user, "Basic");
+                }
+
+                var localToken = await GenerateToken(user);
+
                 // Aquí puedes usar los datos del usuario
-                var email = payload.Email;
-                var name = payload.Name;
-                var picture = payload.Picture;
+                //var email = payload.Email;
+                //var name = payload.Name;
+                //var picture = payload.Picture;
 
                 // Lógica adicional: Crear o autenticar al usuario en tu sistema
                 return Ok(new
                 {
-                    Message = "Inicio de sesión exitoso",
-                    Email = email,
-                    Name = name,
-                    Picture = picture
+                    Message = "Inicio de Sesión Exitoso",
+                    Token = new JwtSecurityTokenHandler().WriteToken(localToken),
+                    Email = user.Email,
+                    Name = user.Name,
+                    Picture = user.ProfileImage
                 });
             }
             catch (InvalidJwtException ex)
             {
                 // Token inválido
-                return BadRequest(new { Message = "Token inválido", Error = ex.Message });
+                return BadRequest(new { Message = "Token Inválido", Error = ex.Message });
             }
         }
 
@@ -82,20 +103,20 @@ namespace SpaceUserAPI.Controllers
                 var claimsPrincipal = tokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
 
                 // Obtener información del usuario
-                var userEmail = claimsPrincipal.FindFirst("preferred_username")?.Value;
-                var name = claimsPrincipal.FindFirst("name")?.Value;
+                string? userEmail = claimsPrincipal.FindFirst("preferred_username")?.Value;
+                string? name = claimsPrincipal.FindFirst("name")?.Value;
 
                 return Ok(new
                 {
-                    message = "Login exitoso",
+                    message = "Login Exitoso",
                     email = userEmail,
-                    name = name
+                    name,
+                    picture = claimsPrincipal.FindFirst("picture")?.Value
                 });
             }
             catch (Exception ex)
             {
-                // _logger.LogError(ex, "Error al validar el token de Microsoft");
-                return BadRequest(new { message = "Token inválido", Error = ex.Message });
+                return BadRequest(new { message = "Token Inválido", Error = ex.Message });
             }
         }
 
@@ -116,22 +137,6 @@ namespace SpaceUserAPI.Controllers
             return Ok(user);
         }
 
-        [HttpPost]
-        [Route("Translate")]
-        public async Task<IActionResult> Translate(TranslatorModel model)
-        {
-            var result = await translator.TranslateText(model.Text!, model.Language!);
-            return Ok(result);
-        }
-
-        [HttpPost]
-        [Route("TranslateHtml")]
-        public ActionResult TranslateHtml(TranslatorHtmlModel model)
-        {
-            var translatedText = translator.TranslateHtml(model.Html!, model.Language!);
-            return Ok(translatedText);
-        }
-
         [HttpPost("Login")]
         public async Task<IActionResult> Login(Login model)
         {
@@ -149,32 +154,59 @@ namespace SpaceUserAPI.Controllers
             
             if (user != null && await userManager.CheckPasswordAsync(user, model.Password!))
             {
-                IList<string> roles = await userManager.GetRolesAsync(user);
-                List<Claim> claims =
-                [
-                    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString() ),
-                    new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()),
-                    new Claim(JwtRegisteredClaimNames.Sub, user.UserName!)
-                ];
+                //IList<string> roles = await userManager.GetRolesAsync(user);
+                //List<Claim> claims =
+                //[
+                //    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString() ),
+                //    new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()),
+                //    new Claim(JwtRegisteredClaimNames.Sub, user.UserName!)
+                //];
 
-                foreach (var role in roles)
-                    claims.Add(new Claim(ClaimTypes.Role, role));
+                //foreach (var role in roles)
+                //    claims.Add(new Claim(ClaimTypes.Role, role));
 
-                var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["JWT:Key"]!));
-                var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+                //var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["JWT:Key"]!));
+                //var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-                var token = new JwtSecurityToken
-                    (
-                        configuration["JWT:Issuer"],
-                        configuration["JWT:Audience"],
-                        claims,
-                        expires: DateTime.UtcNow.AddMinutes(120),
-                        signingCredentials: credentials
-                    );
+                //var token = new JwtSecurityToken
+                //    (
+                //        configuration["JWT:Issuer"],
+                //        configuration["JWT:Audience"],
+                //        claims,
+                //        expires: DateTime.UtcNow.AddMinutes(120),
+                //        signingCredentials: credentials
+                //    );
+                //return Ok(new JwtSecurityTokenHandler().WriteToken(token));
+
+                var token = await GenerateToken(user);
                 return Ok(new JwtSecurityTokenHandler().WriteToken(token));
             }
 
             return Unauthorized();
+        }
+
+        private async Task<JwtSecurityToken> GenerateToken(SpaceUser user)
+        {
+            IList<string> roles = await userManager.GetRolesAsync(user);
+            if (roles.Count == 0)
+            {
+                await userManager.AddToRoleAsync(user, "Basic");
+                roles = await userManager.GetRolesAsync(user);
+            }
+            var claims = new List<Claim>
+            {
+                new Claim(JwtRegisteredClaimNames.Sub, user.UserName!),
+                new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            };
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["JWT:Key"]!));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            return new JwtSecurityToken(
+                issuer: configuration["JWT:Issuer"],
+                audience: configuration["JWT:Audience"],
+                claims: claims,
+                expires: DateTime.UtcNow.AddMinutes(30),
+                signingCredentials: creds);
         }
 
         [HttpPost("ForgotPassword")]
@@ -277,7 +309,8 @@ namespace SpaceUserAPI.Controllers
             var result = await userManager.ConfirmEmailAsync(user, token);
             if (result.Succeeded)
             {
-                return Ok("Registro Confirmado.");
+                // return Ok("Registro Confirmado.");
+                return Redirect("https://nexus-astralis-2.vercel.app");
             }
 
             return BadRequest("ERROR: El E-mail de Confirmación no Está Registrado, ¿Estás Seguro que no Eliminaste tu Cuenta?.");
@@ -363,7 +396,7 @@ namespace SpaceUserAPI.Controllers
             return BadRequest("ERROR: No se Pudo Eliminar el Usuario.");
         }
 
-        private async Task<string> SaveProfileImageAsync(IFormFile? profileImageFile, string email)
+        private static async Task<string> SaveProfileImageAsync(IFormFile? profileImageFile, string email)
         {
             if (profileImageFile is null)
             {

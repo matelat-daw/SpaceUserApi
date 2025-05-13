@@ -16,18 +16,16 @@ builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("Smtp"
 
 builder.Services.Configure<SmtpSettings>(option =>
 {
-    option.Password = Environment.GetEnvironmentVariable("Gmail-Matelat"); // Contraseña del Servidor de Correo.
-    //option.Password = "cmpazrwvngjpmbhw";
+    option.Password = Environment.GetEnvironmentVariable("Gmail-Nexus"); // Contraseña del Servidor de Correo.
 });
 
 builder.Services.AddTransient<IEmailSender, EmailSender>(); // Servicio de Correo.
-builder.Services.AddTransient<ITranslator, Translator>(); // Servicio de Traducción de Texto e HTML.
 
-//var conn = builder.Configuration.GetConnectionString("conn"); // Conexión con la Base de Datos de Usuarios/Productos/Articulos/Servicios.
-//var pass = Environment.GetEnvironmentVariable("SQL-SERVER"); // Contraseña de la Base de Datos de Usuarios/Productos/Articulos/Servicios.
-//var fullConn = $"{conn};Password={pass}";
+var conn = builder.Configuration.GetConnectionString("conn"); // Conexión con la Base de Datos de Usuarios/Productos/Articulos/Servicios.
+var pass = Environment.GetEnvironmentVariable("SQL-SERVER"); // Contraseña de la Base de Datos de Usuarios/Productos/Articulos/Servicios.
+var fullConn = $"{conn};Password={pass}";
 
-builder.Services.AddDbContext<UserContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("conn"))); // Conexión con la Base de Datos de Usuarios/Productos/Articulos/Servicios.
+builder.Services.AddDbContext<UserContext>(options => options.UseSqlServer(fullConn)); // Conexión con la Base de Datos de Usuarios/Productos/Articulos/Servicios.
 
 builder.Services.AddControllers().AddJsonOptions(x => x.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles); // Para Evitar que los JSON Hagan un Bucle Infinito.
 
@@ -63,13 +61,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     {
         options.ClientId = Environment.GetEnvironmentVariable("Google-Client-Id")!;
         options.ClientSecret = Environment.GetEnvironmentVariable("Google-Client-Secret")!;
-        options.CallbackPath = "/signin-google";
     })
     .AddMicrosoftAccount(microsoftOptions =>
     {
         microsoftOptions.ClientId = Environment.GetEnvironmentVariable("Microsoft-Client-Id")!;
         microsoftOptions.ClientSecret = Environment.GetEnvironmentVariable("Microsoft-Client-Secret")!;
-        microsoftOptions.CallbackPath = "/signin-microsoft";
     });
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -102,19 +98,35 @@ builder.Services.AddSwaggerGen(option =>
     });
 }); // Este Método Habilita Swagger para Hacer la Pruebas de la API Autenticando Usuarios con el Token.
 
+var AllowCors = "AllowCors";
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("WithOriginsPolicy", policy =>
+    options.AddPolicy(name: AllowCors, policy =>
     {
-        policy.WithOrigins("https://nexus-astralis-2.vercel.app", "http://localhost:4200") // Puerto de React: 5173.
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        policy.AllowAnyOrigin() // Permitir cualquier origen.
+        .AllowAnyHeader()
+        .AllowAnyMethod();
     });
 });
 
+builder.Logging.ClearProviders(); // Limpia los proveedores de registro predeterminados.
+builder.Logging.AddConsole(); // Agrega el registro en la consola.
+builder.Logging.AddDebug(); // Agrega el registro en la ventana de depuración.
+
+
 var app = builder.Build();
 
-app.UseCors("WithOriginsPolicy");
+app.UseCors(AllowCors); // Habilita CORS para la API.
+
+app.Use(async (context, next) =>
+{
+context.Response.Headers.Remove("Cross-Origin-Opener-Policy");
+context.Response.Headers.Remove("Cross-Origin-Embedder-Policy");
+// Solo para desarrollo, puedes agregar:
+// context.Response.Headers["Cross-Origin-Opener-Policy"] = "unsafe-none";
+await next();
+});
 
 // Configure the HTTP request pipeline.
 // if (app.Environment.IsDevelopment())
