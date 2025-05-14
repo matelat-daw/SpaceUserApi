@@ -10,6 +10,7 @@ using System.Text;
 using Google.Apis.Auth;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Protocols;
+using static Google.Apis.Auth.GoogleJsonWebSignature;
 
 namespace SpaceUserAPI.Controllers
 {
@@ -19,53 +20,31 @@ namespace SpaceUserAPI.Controllers
     {
         private readonly string GoogleClientId = Environment.GetEnvironmentVariable("Google-Client-Id")!; // Reemplaza con tu Client ID.
         private readonly string MicrosoftClientId = Environment.GetEnvironmentVariable("Microsoft-Client-Id")!; // Reemplaza con tu Client ID.
-        private readonly string MicrosoftClientSecret = Environment.GetEnvironmentVariable("Microsoft-Client-Secret")!; // Reemplaza con tu Client Secret.
 
-        //[HttpGet("GoogleLogin/{token}")]
-        //public async Task<IActionResult> GoogleLogin(string token)
         [HttpPost("GoogleLogin")]
-        public async Task<IActionResult> GoogleLogin([FromBody] GoogleLoginRequest request)
+        public async Task<IActionResult> GoogleLogin([FromBody] ExternalLogin request)
         {
             var token = request.Token;
 
             try
             {
-                // Verificar el token de Google
-                var payload = await GoogleJsonWebSignature.ValidateAsync(token, new GoogleJsonWebSignature.ValidationSettings
+                // Verifico el token de Google
+                var payload = await ValidateAsync(token, new ValidationSettings
                 {
-                    Audience = [GoogleClientId] // Validar contra tu Client ID
+                    Audience = [GoogleClientId] // Validar contra el ClientID de Google.
                 });
 
-                var user = await userManager.FindByEmailAsync(payload.Email);
-                if (user == null)
-                {
-                    user = new SpaceUser
-                    {
-                        UserName = payload.Email,
-                        Email = payload.Email,
-                        Name = payload.Name,
-                        EmailConfirmed = true,
-                        ProfileImage = payload.Picture
-                    };
-                    await userManager.CreateAsync(user);
-                    await userManager.AddToRoleAsync(user, "Basic");
-                }
+                SpaceUser user = await VerifyUser(payload.Email, payload.Name, payload.Picture);
 
                 var localToken = await GenerateToken(user);
 
-                // Aquí puedes usar los datos del usuario
-                //var email = payload.Email;
-                //var name = payload.Name;
-                //var picture = payload.Picture;
-
-                // Lógica adicional: Crear o autenticar al usuario en tu sistema
                 return Ok(new
                 {
                     Message = "Inicio de Sesión Exitoso",
                     Token = new JwtSecurityTokenHandler().WriteToken(localToken),
-                    Email = user.Email,
-                    Name = user.Name,
-                    Picture = user.ProfileImage
+                    user.Email,
+                    user.Name,
+                    user.ProfileImage
                 });
             }
             catch (InvalidJwtException ex)
@@ -75,12 +54,12 @@ namespace SpaceUserAPI.Controllers
             }
         }
 
-        [HttpGet("MicrosoftLogin/{token}")]
-        public async Task<IActionResult> MicrosoftLogin(string token)
+        [HttpPost("MicrosoftLogin")]
+        public async Task<IActionResult> MicrosoftLogin([FromBody] ExternalLogin request)
         {
+            var token = request.Token;
             try
             {
-                // Configurar los parámetros de validación
                 var configManager = new ConfigurationManager<OpenIdConnectConfiguration>(
                     "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration",
                     new OpenIdConnectConfigurationRetriever());
@@ -91,7 +70,22 @@ namespace SpaceUserAPI.Controllers
                 var validationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
-                    ValidIssuers = ["https://login.microsoftonline.com/" + MicrosoftClientSecret + "/v2.0"],
+                    IssuerValidator = (issuer, securityToken, validationParameters) =>
+                    {
+                        // Validar que el emisor sea de Microsoft
+                        if (issuer.StartsWith("https://login.microsoftonline.com/") && issuer.EndsWith("/v2.0"))
+                        {
+                            return issuer; // Emisor válido
+                        }
+
+                        // Validar emisores de la versión 1.0
+                        if (issuer.StartsWith("https://sts.windows.net/"))
+                        {
+                            return issuer; // Emisor válido para v1.0
+                        }
+
+                        throw new SecurityTokenInvalidIssuerException("Emisor no válido.");
+                    },
                     ValidateAudience = true,
                     ValidAudiences = [MicrosoftClientId],
                     ValidateIssuerSigningKey = true,
@@ -102,22 +96,48 @@ namespace SpaceUserAPI.Controllers
                 // Validar el token
                 var claimsPrincipal = tokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
 
-                // Obtener información del usuario
-                string? userEmail = claimsPrincipal.FindFirst("preferred_username")?.Value;
-                string? name = claimsPrincipal.FindFirst("name")?.Value;
+                SpaceUser user = await VerifyUser(claimsPrincipal.FindFirst("preferred_username")?.Value!, claimsPrincipal.FindFirst("name")?.Value!, claimsPrincipal.FindFirst("homeAccountId")?.Value!);
+
+                var localToken = await GenerateToken(user);
 
                 return Ok(new
                 {
                     message = "Login Exitoso",
-                    email = userEmail,
-                    name,
-                    picture = claimsPrincipal.FindFirst("picture")?.Value
+                    Token = new JwtSecurityTokenHandler().WriteToken(localToken),
+                    user.Email,
+                    user.Name,
+                    user.ProfileImage
                 });
             }
             catch (Exception ex)
             {
                 return BadRequest(new { message = "Token Inválido", Error = ex.Message });
             }
+        }
+		
+		private async Task<SpaceUser> VerifyUser(string email, string name, string picture)
+        {
+            SpaceUser? user = await userManager.FindByEmailAsync(email);
+            if (user == null)
+            {
+                user = new SpaceUser
+                {
+                    UserName = email,
+                    Email = email,
+                    Name = name,
+                    Surname1 = "",
+                    PhoneNumber = "",
+                    Bday = DateOnly.FromDateTime(DateTime.Now),
+                    EmailConfirmed = true,
+                    ProfileImage = picture
+                };
+                IdentityResult result = await userManager.CreateAsync(user, "Pass-1234");
+                if (result.Succeeded)
+                {
+                    await userManager.AddToRoleAsync(user, "Basic");
+                }
+            }
+            return user;
         }
 
         [HttpGet("Users")]
@@ -154,30 +174,6 @@ namespace SpaceUserAPI.Controllers
             
             if (user != null && await userManager.CheckPasswordAsync(user, model.Password!))
             {
-                //IList<string> roles = await userManager.GetRolesAsync(user);
-                //List<Claim> claims =
-                //[
-                //    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString() ),
-                //    new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()),
-                //    new Claim(JwtRegisteredClaimNames.Sub, user.UserName!)
-                //];
-
-                //foreach (var role in roles)
-                //    claims.Add(new Claim(ClaimTypes.Role, role));
-
-                //var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["JWT:Key"]!));
-                //var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-                //var token = new JwtSecurityToken
-                //    (
-                //        configuration["JWT:Issuer"],
-                //        configuration["JWT:Audience"],
-                //        claims,
-                //        expires: DateTime.UtcNow.AddMinutes(120),
-                //        signingCredentials: credentials
-                //    );
-                //return Ok(new JwtSecurityTokenHandler().WriteToken(token));
-
                 var token = await GenerateToken(user);
                 return Ok(new JwtSecurityTokenHandler().WriteToken(token));
             }
@@ -309,7 +305,6 @@ namespace SpaceUserAPI.Controllers
             var result = await userManager.ConfirmEmailAsync(user, token);
             if (result.Succeeded)
             {
-                // return Ok("Registro Confirmado.");
                 return Redirect("https://nexus-astralis-2.vercel.app");
             }
 
@@ -388,6 +383,12 @@ namespace SpaceUserAPI.Controllers
             var result = await userManager.DeleteAsync(user);
             if (result.Succeeded)
             {
+                var userDirectory = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot/imgs/profile", user.Email!);
+
+                if (Directory.Exists(userDirectory))
+                {
+                    Directory.Delete(userDirectory, true); // true para eliminar el contenido del directorio
+                }
                 await Logout();
 
                 return Ok("Usuario Eliminado.");
