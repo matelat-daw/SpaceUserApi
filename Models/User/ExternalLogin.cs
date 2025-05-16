@@ -1,6 +1,6 @@
 ﻿namespace SpaceUserAPI.Models.User
 {
-    public class GoogleLoginRequest
+    public class ExternalLogin
     {
         public string? Token { get; set; }
     }

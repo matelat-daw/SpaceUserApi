@@ -25,7 +25,8 @@ var conn = builder.Configuration.GetConnectionString("conn"); // Conexión con l
 var pass = Environment.GetEnvironmentVariable("SQL-SERVER"); // Contraseña de la Base de Datos de Usuarios/Productos/Articulos/Servicios.
 var fullConn = $"{conn};Password={pass}";
 
-builder.Services.AddDbContext<UserContext>(options => options.UseSqlServer(fullConn)); // Conexión con la Base de Datos de Usuarios/Productos/Articulos/Servicios.
+// builder.Services.AddDbContext<UserContext>(options => options.UseSqlServer(fullConn)); // Conexión con la Base de Datos de Usuarios/Productos/Articulos/Servicios.
+builder.Services.AddDbContext<UserContext>(options => options.UseSqlServer(conn));
 
 builder.Services.AddControllers().AddJsonOptions(x => x.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles); // Para Evitar que los JSON Hagan un Bucle Infinito.
 
