@@ -60,7 +60,6 @@ namespace SpaceUserAPI.Controllers
             var token = request.Token;
             try
             {
-                // Configurar los parámetros de validación
                 var configManager = new ConfigurationManager<OpenIdConnectConfiguration>(
                     "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration",
                     new OpenIdConnectConfigurationRetriever());
@@ -71,7 +70,26 @@ namespace SpaceUserAPI.Controllers
                 var validationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
+<<<<<<< HEAD
                     ValidIssuers = ["https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0"],
+=======
+                    IssuerValidator = (issuer, securityToken, validationParameters) =>
+                    {
+                        // Validar que el emisor sea de Microsoft
+                        if (issuer.StartsWith("https://login.microsoftonline.com/") && issuer.EndsWith("/v2.0"))
+                        {
+                            return issuer; // Emisor válido
+                        }
+
+                        // Validar emisores de la versión 1.0
+                        if (issuer.StartsWith("https://sts.windows.net/"))
+                        {
+                            return issuer; // Emisor válido para v1.0
+                        }
+
+                        throw new SecurityTokenInvalidIssuerException("Emisor no válido.");
+                    },
+>>>>>>> 24d303cc095472bbe7fa6d8a228cb1833a4780c5
                     ValidateAudience = true,
                     ValidAudiences = [MicrosoftClientId],
                     ValidateIssuerSigningKey = true,
@@ -99,6 +117,31 @@ namespace SpaceUserAPI.Controllers
             {
                 return BadRequest(new { message = "Token Inválido", Error = ex.Message });
             }
+        }
+		
+		private async Task<SpaceUser> VerifyUser(string email, string name, string picture)
+        {
+            SpaceUser? user = await userManager.FindByEmailAsync(email);
+            if (user == null)
+            {
+                user = new SpaceUser
+                {
+                    UserName = email,
+                    Email = email,
+                    Name = name,
+                    Surname1 = "",
+                    PhoneNumber = "",
+                    Bday = DateOnly.FromDateTime(DateTime.Now),
+                    EmailConfirmed = true,
+                    ProfileImage = picture
+                };
+                IdentityResult result = await userManager.CreateAsync(user, "Pass-1234");
+                if (result.Succeeded)
+                {
+                    await userManager.AddToRoleAsync(user, "Basic");
+                }
+            }
+            return user;
         }
 
         private async Task<SpaceUser> VerifyUser(string email, string name, string picture)
@@ -369,6 +412,12 @@ namespace SpaceUserAPI.Controllers
             var result = await userManager.DeleteAsync(user);
             if (result.Succeeded)
             {
+                var userDirectory = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot/imgs/profile", user.Email!);
+
+                if (Directory.Exists(userDirectory))
+                {
+                    Directory.Delete(userDirectory, true); // true para eliminar el contenido del directorio
+                }
                 await Logout();
 
                 return Ok("Usuario Eliminado.");
